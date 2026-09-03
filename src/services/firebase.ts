@@ -2,7 +2,6 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getAuth,
   signInAnonymously,
-  onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
@@ -11,6 +10,7 @@ import {
   User as FirebaseUser,
 } from "firebase/auth";
 import {
+  initializeFirestore,
   getFirestore,
   doc,
   setDoc,
@@ -28,9 +28,11 @@ import { EntriesMap, ThemeMode, TradeEntry, UserAccount } from "../types";
 // Initialize Firebase App and Services
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
+
+// Use named firestore instance for this project
 export const db = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
+  ? initializeFirestore(app, { ignoreUndefinedProperties: true }, firebaseConfig.firestoreDatabaseId)
+  : initializeFirestore(app, { ignoreUndefinedProperties: true });
 
 export const FIREBASE_PROJECT_ID = firebaseConfig.projectId;
 
@@ -46,11 +48,11 @@ export async function hashPassword(str: string): Promise<string> {
 }
 
 /**
- * Clean email to be used as a 100% deterministic, safe document ID in Firestore.
+ * Standardize identifier (Email or Username like db22947) into clean Firestore document ID.
  * Standardized across all devices and platforms (Phone, Computer, iPad).
  */
-export function emailToDocId(email: string): string {
-  const clean = email.trim().toLowerCase();
+export function emailToDocId(rawInput: string): string {
+  const clean = (rawInput || "").trim().toLowerCase();
   return "usr_" + clean.replace(/[^a-zA-Z0-9_-]/g, (c) => `_${c.charCodeAt(0)}_`);
 }
 
@@ -70,8 +72,33 @@ export async function ensureFirebaseAuth(): Promise<FirebaseUser | { uid: string
 }
 
 /**
+ * Direct fetch of all user trades from Firestore
+ */
+export async function fetchUserTradesFromFirestore(
+  identifier: string
+): Promise<{ entries: EntriesMap; theme?: ThemeMode } | null> {
+  const cleanEmail = (identifier || "").trim().toLowerCase();
+  if (!cleanEmail) return null;
+
+  const userDocId = emailToDocId(cleanEmail);
+  const userDocRef = doc(db, "users", userDocId);
+
+  try {
+    const docSnap = await getDoc(userDocRef);
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      const entries: EntriesMap = data.entries || {};
+      const theme: ThemeMode = data.theme === "dark" || data.theme === "light" ? data.theme : "light";
+      return { entries, theme };
+    }
+  } catch (err) {
+    console.warn("fetchUserTradesFromFirestore error:", err);
+  }
+  return null;
+}
+
+/**
  * Login or Sign Up with Google / Gmail Popup
- * Strict Rule: 1 Email = 1 Firestore Account. Does NOT merge guest data.
  */
 export async function firebaseGoogleSignIn(): Promise<{
   user: UserAccount;
@@ -90,26 +117,24 @@ export async function firebaseGoogleSignIn(): Promise<{
 }
 
 /**
- * Direct Login / Connect via Gmail Address
- * Strict Rule: 1 Email = 1 Firestore Account. Does NOT merge guest data.
+ * Direct Login / Connect via Gmail or Username
  */
 export async function firebaseGmailQuickLogin(
-  gmailAddress: string
+  identifier: string
 ): Promise<{ user: UserAccount; entries: EntriesMap; theme?: ThemeMode }> {
-  const cleanEmail = gmailAddress.trim().toLowerCase();
-  const token = `token_gmail_${emailToDocId(cleanEmail)}`;
+  const cleanEmail = identifier.trim().toLowerCase();
+  const token = `token_${emailToDocId(cleanEmail)}`;
   return await initializeOrFetchFirestoreUser(cleanEmail, token);
 }
 
 /**
  * Helper to fetch or initialize user document in Firestore.
- * Always loads this email's own data. If fresh account, starts clean with {}.
  */
 async function initializeOrFetchFirestoreUser(
-  email: string,
+  identifier: string,
   token: string
 ): Promise<{ user: UserAccount; entries: EntriesMap; theme?: ThemeMode }> {
-  const cleanEmail = email.trim().toLowerCase();
+  const cleanEmail = identifier.trim().toLowerCase();
   const userDocId = emailToDocId(cleanEmail);
   const userDocRef = doc(db, "users", userDocId);
   const now = new Date().toISOString();
@@ -125,13 +150,12 @@ async function initializeOrFetchFirestoreUser(
       theme = data.theme;
     }
   } else {
-    // New account: initialize clean in Firestore
+    // New account: initialize in Firestore
     await setDoc(
       userDocRef,
       {
         email: cleanEmail,
         theme: "light",
-        provider: "google",
         createdAt: now,
         updatedAt: now,
         entries: {},
@@ -160,7 +184,6 @@ async function initializeOrFetchFirestoreUser(
             };
           }
         });
-        // Sync back to main doc for rapid reads
         if (Object.keys(entries).length > 0) {
           await setDoc(userDocRef, { entries, updatedAt: now }, { merge: true });
         }
@@ -183,35 +206,34 @@ async function initializeOrFetchFirestoreUser(
 
 /**
  * Register a new user in Firebase (Auth + Firestore)
- * Starts clean with empty {} records for the new account.
  */
 export async function firebaseRegisterUser(
-  email: string,
+  identifier: string,
   pass: string,
   theme: ThemeMode = "light"
 ): Promise<{ user: UserAccount; entries: EntriesMap }> {
-  const cleanEmail = email.trim().toLowerCase();
+  const cleanEmail = identifier.trim().toLowerCase();
   const pwdHash = await hashPassword(pass);
   const userDocId = emailToDocId(cleanEmail);
   const userDocRef = doc(db, "users", userDocId);
   const now = new Date().toISOString();
 
-  // Check if user already exists in Firestore
   const existingDoc = await getDoc(userDocRef);
   if (existingDoc.exists()) {
-    throw new Error("อีเมลนี้มีบัญชีในระบบ Firebase แล้ว กรุณากดเข้าสู่ระบบ (Log in)");
+    throw new Error("บัญชี/อีเมลนี้มีอยู่ในระบบแล้ว กรุณากดเข้าสู่ระบบ (Log in)");
   }
 
   let token = `token_${userDocId}_${Date.now()}`;
 
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
-    token = await cred.user.getIdToken();
-  } catch (fbAuthErr: any) {
-    // If native Firebase Auth throws error but user doesn't exist in Firestore, continue
+  if (cleanEmail.includes("@")) {
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+      token = await cred.user.getIdToken();
+    } catch (fbAuthErr: any) {
+      // fallback to Firestore hash
+    }
   }
 
-  // Save brand-new user profile with empty entries in Firestore
   await setDoc(
     userDocRef,
     {
@@ -221,7 +243,8 @@ export async function firebaseRegisterUser(
       createdAt: now,
       updatedAt: now,
       entries: {},
-    }
+    },
+    { merge: true }
   );
 
   return {
@@ -235,49 +258,48 @@ export async function firebaseRegisterUser(
 }
 
 /**
- * Login with Email and Password via Firebase Firestore / Auth
- * Loads ONLY this email's stored records.
+ * Login with Email/Username and Password
  */
 export async function firebaseLoginUser(
-  email: string,
+  identifier: string,
   pass: string
 ): Promise<{ user: UserAccount; entries: EntriesMap; theme?: ThemeMode }> {
-  const cleanEmail = email.trim().toLowerCase();
+  const cleanEmail = identifier.trim().toLowerCase();
   const pwdHash = await hashPassword(pass);
   const userDocId = emailToDocId(cleanEmail);
   const userDocRef = doc(db, "users", userDocId);
 
-  // Fetch user doc from Firestore
   const docSnap = await getDoc(userDocRef);
 
   if (!docSnap.exists()) {
-    try {
-      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-      const token = await cred.user.getIdToken();
-      // Initialize doc
-      await setDoc(userDocRef, {
-        email: cleanEmail,
-        theme: "light",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        entries: {},
-      });
-      return {
-        user: {
+    if (cleanEmail.includes("@")) {
+      try {
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+        const token = await cred.user.getIdToken();
+        await setDoc(userDocRef, {
           email: cleanEmail,
-          token,
           theme: "light",
-        },
-        entries: {},
-        theme: "light",
-      };
-    } catch (authErr: any) {
-      throw new Error("ไม่พบบัญชีผู้ใช้นี้ใน Firebase กรุณาตรวจสอบอีเมลหรือสมัครสมาชิกใหม่");
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          entries: {},
+        });
+        return {
+          user: {
+            email: cleanEmail,
+            token,
+            theme: "light",
+          },
+          entries: {},
+          theme: "light",
+        };
+      } catch (authErr: any) {
+        throw new Error("ไม่พบบัญชีผู้ใช้นี้ กรุณาตรวจสอบชื่อผู้ใช้/อีเมล หรือสมัครสมาชิกใหม่");
+      }
     }
+    throw new Error("ไม่พบบัญชีผู้ใช้นี้ กรุณาตรวจสอบชื่อผู้ใช้/อีเมล หรือสมัครสมาชิกใหม่");
   }
 
   const userData = docSnap.data();
-  // Verify password if passwordHash was set
   if (userData.passwordHash && userData.passwordHash !== pwdHash) {
     throw new Error("รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง");
   }
@@ -285,38 +307,14 @@ export async function firebaseLoginUser(
   let entries: EntriesMap = userData.entries || {};
   let theme: ThemeMode = userData.theme === "dark" || userData.theme === "light" ? userData.theme : "light";
 
-  // Check subcollection if needed
-  if (Object.keys(entries).length === 0) {
-    try {
-      const tradesCollRef = collection(db, "users", userDocId, "trades");
-      const tradesSnap = await getDocs(tradesCollRef);
-      if (!tradesSnap.empty) {
-        tradesSnap.forEach((d) => {
-          const item = d.data();
-          const key = d.id;
-          if (item && typeof item.amount === "number") {
-            entries[key] = {
-              amount: item.amount,
-              lots: item.lots,
-              session: item.session,
-              technique: item.technique,
-              note: item.note,
-              updatedAt: item.updatedAt,
-            };
-          }
-        });
-      }
-    } catch (err) {
-      console.warn("Subcollection read note:", err);
-    }
-  }
-
   let token = `token_${userDocId}`;
-  try {
-    const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-    token = await cred.user.getIdToken();
-  } catch (e) {
-    // Graceful fallback
+  if (cleanEmail.includes("@")) {
+    try {
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
+      token = await cred.user.getIdToken();
+    } catch (e) {
+      // graceful fallback
+    }
   }
 
   return {
@@ -342,7 +340,7 @@ export async function firebaseLogoutUser(): Promise<void> {
 }
 
 /**
- * Batch write trades to Firestore
+ * Batch write trades to Firestore subcollection
  */
 async function batchWriteTrades(docId: string, entries: EntriesMap): Promise<void> {
   const keys = Object.keys(entries);
@@ -369,20 +367,20 @@ async function batchWriteTrades(docId: string, entries: EntriesMap): Promise<voi
 }
 
 /**
- * Save or update single trade in Firestore for the logged-in email
+ * Save or update single trade in Firestore for the logged-in user
  */
 export async function saveTradeToFirestore(
-  email: string,
+  identifier: string,
   dateKeyStr: string,
   entry: TradeEntry | null,
   allEntries: EntriesMap
 ): Promise<void> {
-  const cleanEmail = email.trim().toLowerCase();
+  const cleanEmail = identifier.trim().toLowerCase();
   const userDocId = emailToDocId(cleanEmail);
   const userDocRef = doc(db, "users", userDocId);
   const now = new Date().toISOString();
 
-  // Update root document containing map of all entries
+  // 1. Update root document containing map of all entries
   await setDoc(
     userDocRef,
     {
@@ -393,7 +391,7 @@ export async function saveTradeToFirestore(
     { merge: true }
   );
 
-  // Update subcollection trade document
+  // 2. Update subcollection trade document
   try {
     const tradeDocRef = doc(db, "users", userDocId, "trades", dateKeyStr);
     if (entry === null) {
@@ -415,14 +413,14 @@ export async function saveTradeToFirestore(
 }
 
 /**
- * Save all entries and theme in Firestore for the logged-in email
+ * Save all entries and theme in Firestore for the logged-in user
  */
 export async function syncAllToFirestore(
-  email: string,
+  identifier: string,
   entries: EntriesMap,
   theme?: ThemeMode
 ): Promise<void> {
-  const cleanEmail = email.trim().toLowerCase();
+  const cleanEmail = identifier.trim().toLowerCase();
   const userDocId = emailToDocId(cleanEmail);
   const now = new Date().toISOString();
   const userDocRef = doc(db, "users", userDocId);
@@ -442,17 +440,27 @@ export async function syncAllToFirestore(
 
 /**
  * Listen for real-time changes to user's trades in Firestore.
- * Whenever any device (phone, computer, iPad) writes to this email's doc,
- * all active subscribers instantly receive the update.
  */
 export function subscribeToUserTrades(
-  email: string,
+  identifier: string,
   onUpdate: (entries: EntriesMap, theme?: ThemeMode) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
-  const cleanEmail = email.trim().toLowerCase();
+  const cleanEmail = identifier.trim().toLowerCase();
   const userDocId = emailToDocId(cleanEmail);
   const userDocRef = doc(db, "users", userDocId);
+
+  // Immediate fast getDoc so data loads without waiting for snapshot propagation
+  getDoc(userDocRef)
+    .then((snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        onUpdate(data.entries || {}, data.theme);
+      }
+    })
+    .catch((err) => {
+      console.warn("Fast getDoc error:", err);
+    });
 
   return onSnapshot(
     userDocRef,
@@ -460,8 +468,6 @@ export function subscribeToUserTrades(
       if (snapshot.exists()) {
         const data = snapshot.data();
         onUpdate(data.entries || {}, data.theme);
-      } else {
-        onUpdate({}, "light");
       }
     },
     (error) => {
@@ -470,3 +476,4 @@ export function subscribeToUserTrades(
     }
   );
 }
+

@@ -30,6 +30,7 @@ import {
   subscribeToUserTrades,
   saveTradeToFirestore,
   syncAllToFirestore,
+  fetchUserTradesFromFirestore,
   FIREBASE_PROJECT_ID,
 } from "./services/firebase";
 import { Header } from "./components/Header";
@@ -96,14 +97,26 @@ export default function App() {
       return;
     }
 
-    setSyncState({
-      status: "syncing",
-      message: `กำลังเชื่อมต่อเรียลไทม์ (${account.email})...`,
-    });
-
     const email = account.email.trim().toLowerCase();
 
-    // Subscribe to Firestore document changes for this email
+    setSyncState({
+      status: "syncing",
+      message: `กำลังเชื่อมต่อคลาวด์ (${email})...`,
+    });
+
+    // 1. Initial fast fetch from Firestore
+    fetchUserTradesFromFirestore(email).then((remote) => {
+      if (remote && remote.entries && Object.keys(remote.entries).length > 0) {
+        setEntries(remote.entries);
+        saveEntriesForUser(remote.entries, email);
+        if (remote.theme === "light" || remote.theme === "dark") {
+          setTheme(remote.theme);
+          saveLocalTheme(remote.theme);
+        }
+      }
+    });
+
+    // 2. Real-time Firestore Listener
     const unsub = subscribeToUserTrades(
       email,
       (remoteEntries, remoteTheme) => {
@@ -132,11 +145,28 @@ export default function App() {
 
     firestoreUnsubRef.current = unsub;
 
+    // 3. Auto-sync on window focus or switching tabs/apps (crucial for mobile Safari/Chrome)
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        fetchUserTradesFromFirestore(email).then((remote) => {
+          if (remote && remote.entries) {
+            setEntries(remote.entries);
+            saveEntriesForUser(remote.entries, email);
+          }
+        });
+      }
+    };
+
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
     return () => {
       if (firestoreUnsubRef.current) {
         firestoreUnsubRef.current();
         firestoreUnsubRef.current = null;
       }
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, [account?.email]);
 
@@ -146,12 +176,17 @@ export default function App() {
     saveLocalAccount(newAccount);
 
     if (!newAccount) {
-      // Logged out: reset entries to clean state
       setEntries({});
     } else {
-      // Switched account: load cached entries for this email (or empty)
       const cached = loadEntriesForUser(newAccount.email);
       setEntries(cached);
+      // Immediately pull fresh from Firestore
+      fetchUserTradesFromFirestore(newAccount.email).then((remote) => {
+        if (remote && remote.entries && Object.keys(remote.entries).length > 0) {
+          setEntries(remote.entries);
+          saveEntriesForUser(remote.entries, newAccount.email);
+        }
+      });
     }
   };
 
@@ -173,9 +208,20 @@ export default function App() {
       return;
     }
 
-    setSyncState((prev) => ({ ...prev, status: "syncing" }));
+    setSyncState((prev) => ({ ...prev, status: "syncing", message: "กำลังดึงข้อมูลล่าสุดจาก Firebase..." }));
     try {
-      await syncAllToFirestore(account.email, entries, theme);
+      const remote = await fetchUserTradesFromFirestore(account.email);
+      if (remote && remote.entries && Object.keys(remote.entries).length > 0) {
+        setEntries(remote.entries);
+        saveEntriesForUser(remote.entries, account.email);
+        if (remote.theme === "light" || remote.theme === "dark") {
+          setTheme(remote.theme);
+          saveLocalTheme(remote.theme);
+        }
+      } else {
+        await syncAllToFirestore(account.email, entries, theme);
+      }
+
       setSyncState({
         status: "synced",
         lastSyncTime: new Date(),
@@ -184,7 +230,7 @@ export default function App() {
       setSaveState("saved");
       setTimeout(() => setSaveState("idle"), 1200);
     } catch (e) {
-      setSyncState((prev) => ({ ...prev, status: "error" }));
+      setSyncState((prev) => ({ ...prev, status: "error", message: "การซิงค์ผิดพลาด" }));
     }
   };
 

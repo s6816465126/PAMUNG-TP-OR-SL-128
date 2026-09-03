@@ -2,5 +2,7 @@
   "name": "PAMUNG - บันทึกกำไรขาดทุนรายวัน",
   "description": "สมุดบันทึกกำไรขาดทุนรายวัน สรุปผลการเทรด พร้อมระบบซิงค์หลายอุปกรณ์และธีมม่วงสว่าง/มืด",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

@@ -95,13 +95,13 @@ export const AuthSyncModal: React.FC<AuthSyncModalProps> = ({
     setSuccessMessage("");
 
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes("@")) {
-      setErrorMessage("กรุณากรอกอีเมลที่ถูกต้อง เช่น yourname@gmail.com");
+    if (!cleanEmail || cleanEmail.length < 3) {
+      setErrorMessage("กรุณากรอกอีเมลหรือชื่อผู้ใช้ (อย่างน้อย 3 ตัวอักษร)");
       return;
     }
 
-    if (!password || password.length < 6) {
-      setErrorMessage("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
+    if (!password || password.length < 4) {
+      setErrorMessage("รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร");
       return;
     }
 
