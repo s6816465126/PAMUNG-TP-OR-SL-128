@@ -20,6 +20,8 @@ import {
   deleteDoc,
   writeBatch,
   onSnapshot,
+  deleteField,
+  updateDoc,
   Unsubscribe,
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
@@ -380,23 +382,54 @@ export async function saveTradeToFirestore(
   const userDocRef = doc(db, "users", userDocId);
   const now = new Date().toISOString();
 
-  // 1. Update root document containing map of all entries
-  await setDoc(
-    userDocRef,
-    {
-      email: cleanEmail,
-      entries: allEntries,
-      updatedAt: now,
-    },
-    { merge: true }
-  );
+  if (entry === null) {
+    // 1. Delete from Firestore entries map
+    try {
+      await updateDoc(userDocRef, {
+        [`entries.${dateKeyStr}`]: deleteField(),
+        updatedAt: now,
+      });
+    } catch (err) {
+      // If doc didn't exist or update failed, overwrite doc
+      await setDoc(
+        userDocRef,
+        {
+          email: cleanEmail,
+          entries: allEntries,
+          updatedAt: now,
+        }
+      );
+    }
 
-  // 2. Update subcollection trade document
-  try {
-    const tradeDocRef = doc(db, "users", userDocId, "trades", dateKeyStr);
-    if (entry === null) {
+    // 2. Delete subcollection document
+    try {
+      const tradeDocRef = doc(db, "users", userDocId, "trades", dateKeyStr);
       await deleteDoc(tradeDocRef);
-    } else {
+    } catch (e) {
+      console.warn("Subcollection trade delete note:", e);
+    }
+  } else {
+    // 1. Save entry to Firestore
+    try {
+      await updateDoc(userDocRef, {
+        [`entries.${dateKeyStr}`]: entry,
+        updatedAt: now,
+      });
+    } catch (err) {
+      await setDoc(
+        userDocRef,
+        {
+          email: cleanEmail,
+          entries: allEntries,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    }
+
+    // 2. Save to subcollection
+    try {
+      const tradeDocRef = doc(db, "users", userDocId, "trades", dateKeyStr);
       await setDoc(
         tradeDocRef,
         {
@@ -406,9 +439,9 @@ export async function saveTradeToFirestore(
         },
         { merge: true }
       );
+    } catch (e) {
+      console.warn("Subcollection trade update note:", e);
     }
-  } catch (e) {
-    console.warn("Subcollection trade update note:", e);
   }
 }
 
@@ -427,14 +460,19 @@ export async function syncAllToFirestore(
 
   const payload: any = {
     email: cleanEmail,
-    entries,
+    entries: entries,
     updatedAt: now,
   };
   if (theme) {
     payload.theme = theme;
   }
 
-  await setDoc(userDocRef, payload, { merge: true });
+  // Update or set full entries (no stale zombie keys)
+  try {
+    await updateDoc(userDocRef, payload);
+  } catch (err) {
+    await setDoc(userDocRef, payload);
+  }
   await batchWriteTrades(userDocId, entries);
 }
 

@@ -172,46 +172,199 @@ export const TradeEditorModal: React.FC<TradeEditorModalProps> = ({
 
         {/* Input Fields */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Amount Input */}
+          {/* Amount Input with Profit/Loss Quick Switcher */}
           <div>
-            <label
+            <div
               style={{
                 display: "flex",
+                justifyContent: "space-between",
                 alignItems: "center",
-                gap: 6,
-                fontSize: 13,
-                fontWeight: 600,
-                color: colors.text,
-                marginBottom: 6,
+                marginBottom: 8,
               }}
             >
-              <DollarSign size={14} color={colors.accent} />
-              กำไร / ขาดทุนสุทธิ (บาท) <span style={{ color: colors.loss }}>*</span>
-            </label>
-            <input
-              ref={amountInputRef}
-              id="input-trade-amount"
-              type="text"
-              inputMode="decimal"
-              value={amountStr}
-              onChange={(e) => setAmountStr(e.target.value)}
-              placeholder="เช่น 1500 หรือ -800 (ติดลบสำหรับขาดทุน)"
-              className="mono"
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: colors.text,
+                }}
+              >
+                <DollarSign size={14} color={colors.accent} />
+                กำไร / ขาดทุนสุทธิ (บาท) <span style={{ color: colors.loss }}>*</span>
+              </label>
+
+              {/* Status Pill */}
+              {amountStr.trim() !== "" && amountStr.trim() !== "-" && !isNaN(Number(amountStr.replace(/,/g, ""))) && (
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: 6,
+                    background: Number(amountStr.replace(/,/g, "")) < 0 ? colors.lossBg : colors.profitBg,
+                    color: Number(amountStr.replace(/,/g, "")) < 0 ? colors.loss : colors.profit,
+                  }}
+                >
+                  {Number(amountStr.replace(/,/g, "")) < 0 ? "📉 ขาดทุน" : "📈 กำไร"}
+                </span>
+              )}
+            </div>
+
+            {/* Quick Toggle: กำไร (+) vs ขาดทุน (-) for mobile keyboards without minus button */}
+            <div
               style={{
-                width: "100%",
-                background: colors.inputBg,
-                border: `1.5px solid ${colors.borderStrong}`,
-                borderRadius: 10,
-                color: colors.text,
-                fontSize: 17,
-                fontWeight: 600,
-                padding: "12px 14px",
-                outline: "none",
-                boxSizing: "border-box",
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 8,
+                marginBottom: 8,
               }}
-            />
-            <div style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
-              * ใส่เครื่องหมายลบ (-) สำหรับวันที่ขาดทุน เช่น -500
+            >
+              <button
+                id="btn-mode-profit"
+                type="button"
+                onClick={() => {
+                  const clean = amountStr.trim().replace(/^-/, "");
+                  setAmountStr(clean);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: !amountStr.trim().startsWith("-") ? 700 : 500,
+                  border: !amountStr.trim().startsWith("-") && amountStr.trim() !== ""
+                    ? `1.5px solid ${colors.profit}`
+                    : `1px solid ${colors.border}`,
+                  background: !amountStr.trim().startsWith("-") && amountStr.trim() !== ""
+                    ? colors.profitBg
+                    : colors.surfaceActive,
+                  color: !amountStr.trim().startsWith("-") && amountStr.trim() !== ""
+                    ? colors.profit
+                    : colors.textMuted,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <span>➕</span>
+                <span>กำไร (บวก)</span>
+              </button>
+
+              <button
+                id="btn-mode-loss"
+                type="button"
+                onClick={() => {
+                  const raw = amountStr.trim();
+                  if (!raw.startsWith("-")) {
+                    setAmountStr(raw ? `-${raw}` : "-");
+                  }
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: amountStr.trim().startsWith("-") ? 700 : 500,
+                  border: amountStr.trim().startsWith("-")
+                    ? `1.5px solid ${colors.loss}`
+                    : `1px solid ${colors.border}`,
+                  background: amountStr.trim().startsWith("-")
+                    ? colors.lossBg
+                    : colors.surfaceActive,
+                  color: amountStr.trim().startsWith("-")
+                    ? colors.loss
+                    : colors.textMuted,
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <span>➖</span>
+                <span>ขาดทุน (ติดลบ)</span>
+              </button>
+            </div>
+
+            {/* Input with inline +/- toggle button */}
+            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+              <input
+                ref={amountInputRef}
+                id="input-trade-amount"
+                type="text"
+                inputMode="decimal"
+                value={amountStr}
+                onChange={(e) => setAmountStr(e.target.value)}
+                placeholder="เช่น 1500 หรือ -800"
+                className="mono"
+                style={{
+                  width: "100%",
+                  background: colors.inputBg,
+                  border: `1.5px solid ${
+                    amountStr.trim().startsWith("-")
+                      ? colors.loss
+                      : amountStr.trim() !== ""
+                      ? colors.profit
+                      : colors.borderStrong
+                  }`,
+                  borderRadius: 10,
+                  color: amountStr.trim().startsWith("-")
+                    ? colors.loss
+                    : amountStr.trim() !== ""
+                    ? colors.profit
+                    : colors.text,
+                  fontSize: 17,
+                  fontWeight: 600,
+                  padding: "12px 64px 12px 14px",
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+
+              {/* Quick +/- Button right inside input */}
+              <button
+                id="btn-toggle-sign"
+                type="button"
+                onClick={() => {
+                  setAmountStr((prev) => {
+                    const raw = prev.trim();
+                    if (raw.startsWith("-")) {
+                      return raw.slice(1);
+                    }
+                    return raw ? `-${raw}` : "-";
+                  });
+                }}
+                style={{
+                  position: "absolute",
+                  right: 6,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: colors.surfaceActive,
+                  border: `1px solid ${colors.border}`,
+                  color: colors.text,
+                  padding: "6px 10px",
+                  borderRadius: 7,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 3,
+                }}
+                title="กดเพื่อสลับ บวก / ลบ (+/-)"
+              >
+                <span>±</span>
+                <span style={{ fontSize: 11 }}>+/-</span>
+              </button>
+            </div>
+
+            <div style={{ fontSize: 11, color: colors.textMuted, marginTop: 5 }}>
+              💡 บนมือถือ: แตะปุ่ม <b>"ขาดทุน (ติดลบ)"</b> หรือปุ่ม <b>"± +/-"</b> เพื่อใส่เครื่องหมายลบได้ทันที
             </div>
           </div>
 
@@ -414,7 +567,7 @@ export const TradeEditorModal: React.FC<TradeEditorModalProps> = ({
             borderTop: `1px solid ${colors.border}`,
           }}
         >
-          {entry && (
+          {(entry !== undefined || amountStr.trim() !== "") && (
             <button
               id="btn-delete-trade"
               type="button"
@@ -425,16 +578,18 @@ export const TradeEditorModal: React.FC<TradeEditorModalProps> = ({
                 gap: 6,
                 padding: "11px 16px",
                 borderRadius: 10,
-                border: `1px solid ${colors.border}`,
-                background: "transparent",
+                border: `1.5px solid ${colors.loss}`,
+                background: colors.lossBg,
                 color: colors.loss,
                 fontSize: 13,
-                fontWeight: 600,
+                fontWeight: 700,
                 cursor: "pointer",
+                transition: "all 0.15s ease",
               }}
+              title="ลบรายการบันทึกของวันนี้"
             >
-              <Trash2 size={15} />
-              ลบ
+              <Trash2 size={16} color={colors.loss} />
+              ลบรายการ
             </button>
           )}
 
