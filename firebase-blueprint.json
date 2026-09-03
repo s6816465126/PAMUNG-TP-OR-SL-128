@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with authentication and settings",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "theme": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["email"]
+    },
+    "TradeEntry": {
+      "title": "TradeEntry",
+      "description": "Individual trade entry record for a specific day",
+      "type": "object",
+      "properties": {
+        "dateKey": { "type": "string" },
+        "amount": { "type": "number" },
+        "lots": { "type": "number" },
+        "session": { "type": "string" },
+        "technique": { "type": "string" },
+        "note": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["amount", "lots", "session", "technique"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User account document containing settings and profile"
+    },
+    "/users/{userId}/trades/{dateKey}": {
+      "schema": "TradeEntry",
+      "description": "Daily trade logs for each user"
+    }
+  }
+}
